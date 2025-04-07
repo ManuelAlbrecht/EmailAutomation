@@ -1,5 +1,4 @@
 import os
-import threading
 import time
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
@@ -13,6 +12,7 @@ import pytz
 from flask_apscheduler import APScheduler
 import requests
 from apscheduler.schedulers.background import BackgroundScheduler
+import random
 
 # Load environment variables
 load_dotenv()
@@ -47,7 +47,7 @@ imap_monitor = IMAPMonitor(
 )
 
 scheduler = BackgroundScheduler()
-scheduler.start()
+
 
 claude_processor = AssistantTester(
     api_key= os.getenv('OPENAI_API_KEY'),
@@ -57,67 +57,65 @@ claude_processor = AssistantTester(
 # Send email using your existing email_handler
 def process_monitored_emails():
     """
-    Background thread to process monitored emails
-    """
-    while True:
-        
-        try:
-            # Monitor and fetch new emails
-            new_emails = imap_monitor.monitor_emails()
-            if new_emails:
-                print(f"Found {len(new_emails)} new emails")
-                for email_data in new_emails:
-                    logger.info(f"Processing email: {email_data['sender']}")
-                    # Detailed email processing
-                    try:
-                        # Classify email response using AI processor
-                        ai_response = claude_processor.ai_assistant(email_data)
-                        print(ai_response)
-                        # Log AI classification
-                        logger.info(f"AI Classification: {ai_response}")
-                        filtered_lines = [line for line in ai_response.split('\n') if not line.startswith("STATUS:")]
-                        # Join the remaining lines back together
-                        body = '\n'.join(filtered_lines)
-                        status_line = ai_response.split("STATUS: ")[1].split("\n")[0].strip()
-                        if status_line == 'FOLLOWUP':
-                            status_line='Follow Up'
-                        
-                        sender = email_data['sender']
-                        sender_email = sender.split('<')[1].split('>')[0] if '<' in sender and '>' in sender else sender
-                        logger.info(f"Sending status email to {sender_email} with status")
-                        
-                        success = email_handler.send_status_email(sender_email,body,)
-            
-                        if success:
-                            logger.info(f"Successfully sent email to {sender_email}")
-                        else:
-                            logger.error(f"Failed to send email to {sender_email}")
-                            
-                        # Update CRM entry status
-                        # Fetch CRM data
-                        data = zoho_crm_service.fetch_zoho_record_by_email(sender_email)
+    process monitored emails
+    """ 
+    try:
+        # Monitor and fetch new emails
+        new_emails = imap_monitor.monitor_emails()
+        if new_emails:
+            print(f"Found {len(new_emails)} new emails")
+            for email_data in new_emails:
+                logger.info(f"Processing email: {email_data['sender']}")
+                # Detailed email processing
+                try:
+                    # Classify email response using AI processor
+                    ai_response = claude_processor.ai_assistant(email_data)
+                    print(ai_response)
+                    # Log AI classification
+                    logger.info(f"AI Classification: {ai_response}")
+                    filtered_lines = [line for line in ai_response.split('\n') if not line.startswith("STATUS:")]
+                    # Join the remaining lines back together
+                    body = '\n'.join(filtered_lines)
+                    status_line = ai_response.split("STATUS: ")[1].split("\n")[0].strip()
+                    if status_line == 'FOLLOWUP':
+                        status_line='Follow Up'
                     
-                        if not data:
-                            logger.warning(f"No Zoho record found for email {sender_email}")
-                            continue
-                        record_id, followup_hist = data
-                        zoho_crm_service.update_entry_status(
-                            entry_id=record_id,
-                            status=status_line,
-                            )
-                            
-                    except Exception as email_process_error:
-                        logger.error(f"Error processing individual email: {email_process_error}")
-                        logger.exception(email_process_error)
-            
-            # Wait before next check
-            time.sleep(imap_monitor.check_interval)
+                    sender = email_data['sender']
+                    sender_email = sender.split('<')[1].split('>')[0] if '<' in sender and '>' in sender else sender
+                    logger.info(f"Sending status email to {sender_email} with status")
+                    
+                    success = email_handler.send_status_email(sender_email,body,)
         
-        except Exception as e:
-            logger.error(f"Error in email monitoring thread: {e}")
-            logger.exception(e)  # Log the full stack trace
-            time.sleep(60)  # Wait before retrying after error
-            
+                    if success:
+                        logger.info(f"Successfully sent email to {sender_email}")
+                    else:
+                        logger.error(f"Failed to send email to {sender_email}")
+                        
+                    # Update CRM entry status
+                    # Fetch CRM data
+                    data = zoho_crm_service.fetch_zoho_record_by_email(sender_email)
+                
+                    if not data:
+                        logger.warning(f"No Zoho record found for email {sender_email}")
+                        continue
+                    record_id, followup_hist = data
+                    zoho_crm_service.update_entry_status(
+                        entry_id=record_id,
+                        status=status_line,
+                        )
+                        
+                except Exception as email_process_error:
+                    logger.error(f"Error processing individual email: {email_process_error}")
+                    logger.exception(email_process_error)
+        
+        # Wait before next check
+        time.sleep(imap_monitor.check_interval)
+    
+    except Exception as e:
+        logger.error(f"Error in email monitoring thread: {e}")
+        logger.exception(e)  # Log the full stack trace
+        time.sleep(60)  # Wait before retrying after error
+        
 
             
 def extract_entry_id_from_email(email_data):
@@ -260,10 +258,39 @@ def schedule_followups():
         except Exception as e:
             logger.error(f"Error in scheduled followups: {str(e)}")
 
-# Schedule the job to run daily at 9:00 AM
-scheduler.add_job(
+
+
+def schedule_email_processing():
+    """Schedule process_monitored_emails() to run at 3 random times per weekday."""
+    # Remove only jobs related to email processing
+    for job in scheduler.get_jobs():
+        if job.id.startswith("email_processing_"):
+            scheduler.remove_job(job.id)
+
+    base_time = 9  # Start from 9 AM
+    for i in range(3):
+        random_hour = base_time + random.randint(0, 3) + (i * 3)  # Ensure at least 3-hour gap
+        random_minute = random.randint(0, 59)
+
+        job_id = f"email_processing_{i+1}"
+        scheduler.add_job(
+            func=process_monitored_emails,
+            trigger="cron",
+            day_of_week='mon-fri',
+            hour=random_hour,
+            minute=random_minute,
+            id=job_id,
+            name=f"Email processing {i+1}",
+            replace_existing=True
+        )
+        logger.info(f"Scheduled weekday email processing {i+1} at {random_hour}:{random_minute}")
+
+
+
+job1 = scheduler.add_job(
     func=schedule_followups,
     trigger='cron',
+    day_of_week='mon-fri',
     hour=9,
     minute=0,
     id='daily_followups',
@@ -271,13 +298,21 @@ scheduler.add_job(
     replace_existing=True
 )
 
+
+job2= scheduler.add_job(
+    func=schedule_email_processing,
+    trigger="cron",
+    day_of_week='mon-fri',
+    hour=0,
+    minute=0,
+    id="daily_reschedule",
+    name="Reschedule email processing",
+    replace_existing=True
+)
+
 if __name__ == '__main__':
-    email_monitor_thread = threading.Thread(
-        target=process_monitored_emails, 
-        daemon=True
-    )
-    email_monitor_thread.start()
-    
+    scheduler.start()
+    print("scheduler started")
     app.run(
         host='0.0.0.0', 
         port=int(os.getenv('PORT', 5050)), 
