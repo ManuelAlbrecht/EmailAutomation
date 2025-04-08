@@ -46,7 +46,7 @@ imap_monitor = IMAPMonitor(
     check_interval=60
 )
 
-scheduler = BackgroundScheduler()
+scheduler = BackgroundScheduler(timezone=pytz.timezone('Europe/Berlin'))
 
 
 claude_processor = AssistantTester(
@@ -186,7 +186,7 @@ def process_email_queue():
                 email_handler.send_personalizedtemplate_email(
                     email, anrede, nachname, vorname
                 )
-            timezone =pytz.timezone('Europe/Moscow')
+            timezone =pytz.timezone('Europe/Berlin')
             current_time = datetime.now(timezone)
 
             formatted_time = current_time.replace(microsecond=0).isoformat()
