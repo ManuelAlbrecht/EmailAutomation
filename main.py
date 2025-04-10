@@ -46,7 +46,7 @@ imap_monitor = IMAPMonitor(
     check_interval=60
 )
 
-scheduler = BackgroundScheduler(timezone=pytz.timezone('Europe/Berlin'))
+scheduler = BackgroundScheduler()
 
 
 claude_processor = AssistantTester(
@@ -186,7 +186,7 @@ def process_email_queue():
                 email_handler.send_personalizedtemplate_email(
                     email, anrede, nachname, vorname
                 )
-            timezone =pytz.timezone('Europe/Berlin')
+            timezone =pytz.timezone('Europe/Moscow')
             current_time = datetime.now(timezone)
 
             formatted_time = current_time.replace(microsecond=0).isoformat()
@@ -261,36 +261,39 @@ def schedule_followups():
 
 
 def schedule_email_processing():
-    """Schedule process_monitored_emails() to run at 3 random times per weekday."""
+    """Schedule process_monitored_emails() to run at 3 random times per day."""
+    today = datetime.today().weekday()
+    if today in [5, 6]:  # 5 = Saturday, 6 = Sunday
+        logger.info("Skipping email scheduling because today is a weekend.")
+        return 
     # Remove only jobs related to email processing
     for job in scheduler.get_jobs():
         if job.id.startswith("email_processing_"):
             scheduler.remove_job(job.id)
-
+    
     base_time = 9  # Start from 9 AM
     for i in range(3):
         random_hour = base_time + random.randint(0, 3) + (i * 3)  # Ensure at least 3-hour gap
         random_minute = random.randint(0, 59)
-
+        
         job_id = f"email_processing_{i+1}"
         scheduler.add_job(
             func=process_monitored_emails,
             trigger="cron",
-            day_of_week='mon-fri',
             hour=random_hour,
             minute=random_minute,
             id=job_id,
             name=f"Email processing {i+1}",
             replace_existing=True
         )
-        logger.info(f"Scheduled weekday email processing {i+1} at {random_hour}:{random_minute}")
+        logger.info(f"Scheduled email processing {i+1} at {random_hour}:{random_minute}")
 
 
 
-job1 = scheduler.add_job(
+
+job1= scheduler.add_job(
     func=schedule_followups,
     trigger='cron',
-    day_of_week='mon-fri',
     hour=9,
     minute=0,
     id='daily_followups',
@@ -302,7 +305,6 @@ job1 = scheduler.add_job(
 job2= scheduler.add_job(
     func=schedule_email_processing,
     trigger="cron",
-    day_of_week='mon-fri',
     hour=0,
     minute=0,
     id="daily_reschedule",
